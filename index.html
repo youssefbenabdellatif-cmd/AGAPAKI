@@ -267,7 +267,7 @@ body {
     <div class="miles-value">~1,248</div>
     <div class="miles-sub">miles &nbsp;(≈ 2,009 km)</div>
     <div class="miles-route">
-      <span>🇹🇳 Sousse</span>
+      <span>🇹🇳 Tunis</span>
       <span>──────✈──────</span>
       <span>🇬🇷 Athens</span>
     </div>
@@ -278,12 +278,12 @@ body {
     <div class="clocks-row">
       <div class="clock-box">
         <div class="clock-flag">🇹🇳</div>
-        <div class="clock-country">Sousse · youssefaki</div>
+        <div class="clock-country">Tunis · youssefaki</div>
         <div class="clock-time" id="tunis-time">--:--:--</div>
         <div class="clock-date" id="tunis-date"></div>
       </div>
       <div class="clock-diff">
-        <div class="diff-num">+2h</div>
+        <div class="diff-num">+1h</div>
         <div class="diff-label">Greece<br>ahead</div>
       </div>
       <div class="clock-box">
@@ -305,7 +305,7 @@ body {
     <div class="info-card">
       <div class="info-card-icon">✈️</div>
       <div class="info-card-label">Flight duration</div>
-      <div class="info-card-value">~2 hours</div>
+      <div class="info-card-value">~4 hours</div>
       <div class="info-card-sub">Tunis → Athens</div>
     </div>
   </div>
@@ -497,7 +497,43 @@ calYear  = now.getFullYear();
 calMonth = now.getMonth();
 
 
+
+
 /* ---- drawing board ---- */
+const DRAW_PASSWORD = 'agapaki2026';
+const STORAGE_KEY_DRAWS = 'shared_drawings_v2';
+
+function checkPassword() {
+  const val = document.getElementById('pw-input').value;
+  if (val === DRAW_PASSWORD) {
+    document.getElementById('draw-lock').style.display = 'none';
+    document.getElementById('draw-board').style.display = 'block';
+    initDrawBoard();
+  } else {
+    document.getElementById('pw-error').style.display = 'block';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-input').focus();
+  }
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && document.getElementById('page-draw').classList.contains('active')) {
+    const lock = document.getElementById('draw-lock');
+    if (lock.style.display !== 'none') checkPassword();
+  }
+});
+
+let boardInited = false;
+function initDrawBoard() {
+  if (!boardInited) {
+    makeDrawable('y');
+    makeDrawable('a');
+    boardInited = true;
+  }
+  loadGallery();
+  setInterval(loadGallery, 8000);
+}
+
 function makeDrawable(id) {
   const canvas = document.getElementById('canvas-' + id);
   const ctx = canvas.getContext('2d');
@@ -511,30 +547,23 @@ function makeDrawable(id) {
     return [(src.clientX - r.left) * scaleX, (src.clientY - r.top) * scaleY];
   }
 
-  function start(e) { e.preventDefault(); drawing = true; [lastX, lastY] = getPos(e); }
-  function end() { drawing = false; }
-  function draw(e) {
-    if (!drawing) return; e.preventDefault();
-    const color = document.getElementById('color-' + id).value;
-    const size  = document.getElementById('size-' + id).value;
-    const [x, y] = getPos(e);
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-    [lastX, lastY] = [x, y];
-  }
+  canvas.addEventListener('mousedown',  e => { drawing = true; [lastX, lastY] = getPos(e); });
+  canvas.addEventListener('mouseup',    () => drawing = false);
+  canvas.addEventListener('mouseleave', () => drawing = false);
+  canvas.addEventListener('mousemove',  e => { if (!drawing) return; doDraw(ctx, id, getPos(e), [lastX, lastY]); [lastX, lastY] = getPos(e); });
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); drawing = true; [lastX, lastY] = getPos(e); }, {passive:false});
+  canvas.addEventListener('touchend',   e => { e.preventDefault(); drawing = false; }, {passive:false});
+  canvas.addEventListener('touchmove',  e => { e.preventDefault(); if (!drawing) return; doDraw(ctx, id, getPos(e), [lastX, lastY]); [lastX, lastY] = getPos(e); }, {passive:false});
+}
 
-  canvas.addEventListener('mousedown', start);
-  canvas.addEventListener('mouseup', end);
-  canvas.addEventListener('mousemove', draw);
-  canvas.addEventListener('touchstart', start, {passive:false});
-  canvas.addEventListener('touchend', end);
-  canvas.addEventListener('touchmove', draw, {passive:false});
+function doDraw(ctx, id, [x, y], [lx, ly]) {
+  ctx.beginPath();
+  ctx.moveTo(lx, ly);
+  ctx.lineTo(x, y);
+  ctx.strokeStyle = document.getElementById('color-' + id).value;
+  ctx.lineWidth   = document.getElementById('size-' + id).value;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.stroke();
 }
 
 function clearCanvas(id) {
@@ -542,26 +571,48 @@ function clearCanvas(id) {
   c.getContext('2d').clearRect(0, 0, c.width, c.height);
 }
 
-function submitDrawing(id) {
+async function submitDrawing(id) {
   const canvas = document.getElementById('canvas-' + id);
   const dataUrl = canvas.toDataURL('image/png');
   const who = id === 'y' ? 'youssefaki 🇹🇳' : 'agapaki 🇬🇷';
-  const ts = new Date().toLocaleString('en-GB', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
-  const stored = JSON.parse(localStorage.getItem('drawings') || '[]');
-  stored.unshift({ who, ts, img: dataUrl });
-  if (stored.length > 20) stored.pop();
-  localStorage.setItem('drawings', JSON.stringify(stored));
+  const ts = new Date().toLocaleString('en-GB', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+
+  // Save to Anthropic artifact storage (shared between all users)
+  try {
+    const existing = await window.storage.get('drawings', true).catch(() => null);
+    const list = existing ? JSON.parse(existing.value) : [];
+    list.unshift({ who, ts, img: dataUrl });
+    if (list.length > 30) list.pop();
+    await window.storage.set('drawings', JSON.stringify(list), true);
+  } catch(e) {
+    // fallback to localStorage if storage API unavailable
+    const list = JSON.parse(localStorage.getItem(STORAGE_KEY_DRAWS) || '[]');
+    list.unshift({ who, ts, img: dataUrl });
+    if (list.length > 30) list.pop();
+    localStorage.setItem(STORAGE_KEY_DRAWS, JSON.stringify(list));
+  }
+
   clearCanvas(id);
   loadGallery();
 }
 
-function loadGallery() {
+async function loadGallery() {
   const gallery = document.getElementById('gallery');
   const empty   = document.getElementById('gallery-empty');
-  const stored  = JSON.parse(localStorage.getItem('drawings') || '[]');
-  if (!stored.length) { gallery.innerHTML=''; empty.style.display='block'; return; }
+  const loading = document.getElementById('gallery-loading');
+
+  let list = [];
+  try {
+    const result = await window.storage.get('drawings', true).catch(() => null);
+    list = result ? JSON.parse(result.value) : [];
+  } catch(e) {
+    list = JSON.parse(localStorage.getItem(STORAGE_KEY_DRAWS) || '[]');
+  }
+
+  loading.style.display = 'none';
+  if (!list.length) { gallery.innerHTML = ''; empty.style.display = 'block'; return; }
   empty.style.display = 'none';
-  gallery.innerHTML = stored.map(d => `
+  gallery.innerHTML = list.map(d => `
     <div style="background:rgba(255,255,255,0.6);border-radius:14px;padding:0.6rem;border:1px solid rgba(255,255,255,0.85);">
       <div style="font-size:0.72rem;font-weight:700;color:#ad1457;margin-bottom:4px;">${d.who} · ${d.ts}</div>
       <img src="${d.img}" style="width:100%;border-radius:8px;display:block;">
@@ -569,75 +620,105 @@ function loadGallery() {
   `).join('');
 }
 
-const origShowPage = showPage;
-window.showPage = function(id) {
-  origShowPage(id);
-  if (id === 'page-draw') {
-    makeDrawable('y');
-    makeDrawable('a');
-    loadGallery();
+async function clearHistory() {
+  if (!confirm('Clear all drawings? 💔')) return;
+  try {
+    await window.storage.set('drawings', '[]', true);
+  } catch(e) {
+    localStorage.removeItem(STORAGE_KEY_DRAWS);
   }
+  loadGallery();
+}
+
+// Reset lock when leaving draw page
+const _origShowPage = showPage;
+window.showPage = function(id) {
+  if (id !== 'page-draw') {
+    document.getElementById('draw-lock').style.display = 'flex';
+    document.getElementById('draw-board').style.display = 'none';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-error').style.display = 'none';
+    boardInited = false;
+  }
+  _origShowPage(id);
 };
 
 </script>
+
+
 
 <!-- ===== PAGE 3: DRAWING BOARD ===== -->
 <div class="page" id="page-draw">
 <div class="container">
 
-  <button class="back-btn" onclick="showPage('page-home')">← Back to our page</button>
-
-  <div class="period-page-title">
-    <div class="heart-divider">🎨 💕 🎨</div>
-    <div class="main-title" style="font-family:'Dancing Script',cursive;font-size:2.4rem;color:#880e4f">Our Drawing Board</div>
-    <div class="subtitle">Draw something for each other 💌</div>
-  </div>
-
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:1.5rem;">
-
-    <div class="card" style="padding:1rem;">
-      <div style="font-size:0.78rem;font-weight:700;color:#ad1457;text-transform:uppercase;letter-spacing:0.07em;text-align:center;margin-bottom:0.6rem;">
-        🇹🇳 Youssefaki's drawing
-      </div>
-      <canvas id="canvas-y" width="280" height="260"
-        style="border-radius:12px;border:2px dashed rgba(233,30,99,0.25);background:#fff;cursor:crosshair;touch-action:none;width:100%;"></canvas>
-      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;justify-content:center;">
-        <input type="color" id="color-y" value="#e91e63" style="width:32px;height:32px;border:none;border-radius:50%;cursor:pointer;padding:0;background:none;">
-        <input type="range" id="size-y" min="2" max="20" value="5" style="flex:1;min-width:60px;">
-        <button onclick="clearCanvas('y')" style="font-size:0.75rem;padding:4px 10px;border-radius:20px;border:1px solid rgba(233,30,99,0.3);background:rgba(255,255,255,0.7);color:#880e4f;cursor:pointer;">Clear</button>
-      </div>
-      <button onclick="submitDrawing('y')"
-        style="width:100%;margin-top:8px;padding:0.7rem;border:none;border-radius:20px;background:linear-gradient(135deg,#f48fb1,#ce93d8);color:#fff;font-family:'Nunito',sans-serif;font-weight:700;font-size:0.9rem;cursor:pointer;">
-        💌 Send my drawing
+  <!-- PASSWORD SCREEN -->
+  <div id="draw-lock" style="min-height:60vh;display:flex;align-items:center;justify-content:center;">
+    <div class="card" style="max-width:340px;width:100%;text-align:center;padding:2rem;">
+      <div style="font-size:2rem;margin-bottom:0.5rem;">🔒</div>
+      <div style="font-family:'Dancing Script',cursive;font-size:1.8rem;color:#880e4f;margin-bottom:0.3rem;">Our Secret Board</div>
+      <div style="font-size:0.82rem;color:#ab47bc;margin-bottom:1.4rem;">Enter the password to continue 💕</div>
+      <input id="pw-input" type="password" placeholder="password..." autocomplete="off"
+        style="width:100%;padding:0.75rem 1rem;border-radius:50px;border:1.5px solid rgba(233,30,99,0.3);font-family:'Nunito',sans-serif;font-size:1rem;text-align:center;outline:none;margin-bottom:0.8rem;background:rgba(255,255,255,0.8);">
+      <div id="pw-error" style="color:#e91e63;font-size:0.8rem;margin-bottom:0.6rem;display:none;">Wrong password 💔 try again</div>
+      <button onclick="checkPassword()"
+        style="width:100%;padding:0.8rem;border:none;border-radius:50px;background:linear-gradient(135deg,#f48fb1,#ce93d8);color:#fff;font-family:'Nunito',sans-serif;font-weight:700;font-size:1rem;cursor:pointer;">
+        Enter 🌸
       </button>
-    </div>
-
-    <div class="card" style="padding:1rem;">
-      <div style="font-size:0.78rem;font-weight:700;color:#ad1457;text-transform:uppercase;letter-spacing:0.07em;text-align:center;margin-bottom:0.6rem;">
-        🇬🇷 Agapaki's drawing
-      </div>
-      <canvas id="canvas-a" width="280" height="260"
-        style="border-radius:12px;border:2px dashed rgba(233,30,99,0.25);background:#fff;cursor:crosshair;touch-action:none;width:100%;"></canvas>
-      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;justify-content:center;">
-        <input type="color" id="color-a" value="#9c27b0" style="width:32px;height:32px;border:none;border-radius:50%;cursor:pointer;padding:0;background:none;">
-        <input type="range" id="size-a" min="2" max="20" value="5" style="flex:1;min-width:60px;">
-        <button onclick="clearCanvas('a')" style="font-size:0.75rem;padding:4px 10px;border-radius:20px;border:1px solid rgba(233,30,99,0.3);background:rgba(255,255,255,0.7);color:#880e4f;cursor:pointer;">Clear</button>
-      </div>
-      <button onclick="submitDrawing('a')"
-        style="width:100%;margin-top:8px;padding:0.7rem;border:none;border-radius:20px;background:linear-gradient(135deg,#f48fb1,#ce93d8);color:#fff;font-family:'Nunito',sans-serif;font-weight:700;font-size:0.9rem;cursor:pointer;">
-        💌 Send my drawing
-      </button>
+      <button class="back-btn" onclick="showPage('page-home')" style="margin-top:1rem;display:block;width:100%;text-align:center;">← Back</button>
     </div>
   </div>
 
-  <!-- Shared gallery -->
-  <div class="card">
-    <div style="font-size:0.8rem;font-weight:700;color:#ad1457;text-transform:uppercase;letter-spacing:0.08em;text-align:center;margin-bottom:1rem;">
-      💕 Our drawings together
+  <!-- DRAWING BOARD (hidden until password ok) -->
+  <div id="draw-board" style="display:none;">
+    <button class="back-btn" onclick="showPage('page-home')">← Back to our page</button>
+
+    <div class="period-page-title">
+      <div class="heart-divider">🎨 💕 🎨</div>
+      <div class="main-title" style="font-family:'Dancing Script',cursive;font-size:2.4rem;color:#880e4f">Our Drawing Board</div>
+      <div class="subtitle">Draw something for each other 💌</div>
     </div>
-    <div id="gallery" style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;"></div>
-    <div id="gallery-empty" style="text-align:center;font-size:0.85rem;color:#ab47bc;font-style:italic;padding:1rem 0;">
-      No drawings yet — be the first! 🌸
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:1.5rem;">
+      <div class="card" style="padding:1rem;">
+        <div style="font-size:0.78rem;font-weight:700;color:#ad1457;text-transform:uppercase;letter-spacing:0.07em;text-align:center;margin-bottom:0.6rem;">🇹🇳 Youssefaki</div>
+        <canvas id="canvas-y" width="280" height="260"
+          style="border-radius:12px;border:2px dashed rgba(233,30,99,0.25);background:#fff;cursor:crosshair;touch-action:none;width:100%;display:block;"></canvas>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;justify-content:center;align-items:center;">
+          <input type="color" id="color-y" value="#e91e63" style="width:32px;height:32px;border:none;border-radius:50%;cursor:pointer;padding:0;">
+          <input type="range" id="size-y" min="2" max="20" value="5" style="flex:1;min-width:60px;">
+          <button onclick="clearCanvas('y')" style="font-size:0.75rem;padding:4px 10px;border-radius:20px;border:1px solid rgba(233,30,99,0.3);background:rgba(255,255,255,0.7);color:#880e4f;cursor:pointer;">Clear</button>
+        </div>
+        <button onclick="submitDrawing('y')"
+          style="width:100%;margin-top:8px;padding:0.7rem;border:none;border-radius:20px;background:linear-gradient(135deg,#f48fb1,#ce93d8);color:#fff;font-family:'Nunito',sans-serif;font-weight:700;font-size:0.9rem;cursor:pointer;">
+          💌 Send
+        </button>
+      </div>
+
+      <div class="card" style="padding:1rem;">
+        <div style="font-size:0.78rem;font-weight:700;color:#ad1457;text-transform:uppercase;letter-spacing:0.07em;text-align:center;margin-bottom:0.6rem;">🇬🇷 Agapaki</div>
+        <canvas id="canvas-a" width="280" height="260"
+          style="border-radius:12px;border:2px dashed rgba(233,30,99,0.25);background:#fff;cursor:crosshair;touch-action:none;width:100%;display:block;"></canvas>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;justify-content:center;align-items:center;">
+          <input type="color" id="color-a" value="#9c27b0" style="width:32px;height:32px;border:none;border-radius:50%;cursor:pointer;padding:0;">
+          <input type="range" id="size-a" min="2" max="20" value="5" style="flex:1;min-width:60px;">
+          <button onclick="clearCanvas('a')" style="font-size:0.75rem;padding:4px 10px;border-radius:20px;border:1px solid rgba(233,30,99,0.3);background:rgba(255,255,255,0.7);color:#880e4f;cursor:pointer;">Clear</button>
+        </div>
+        <button onclick="submitDrawing('a')"
+          style="width:100%;margin-top:8px;padding:0.7rem;border:none;border-radius:20px;background:linear-gradient(135deg,#f48fb1,#ce93d8);color:#fff;font-family:'Nunito',sans-serif;font-weight:700;font-size:0.9rem;cursor:pointer;">
+          💌 Send
+        </button>
+      </div>
+    </div>
+
+    <!-- Shared gallery -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px;">
+        <div style="font-size:0.8rem;font-weight:700;color:#ad1457;text-transform:uppercase;letter-spacing:0.08em;">💕 Our drawings</div>
+        <button onclick="clearHistory()" style="font-size:0.78rem;padding:5px 14px;border-radius:20px;border:1px solid rgba(233,30,99,0.3);background:rgba(255,255,255,0.7);color:#880e4f;cursor:pointer;font-family:'Nunito',sans-serif;">🗑 Clear history</button>
+      </div>
+      <div id="gallery" style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;"></div>
+      <div id="gallery-empty" style="text-align:center;font-size:0.85rem;color:#ab47bc;font-style:italic;padding:1rem 0;">No drawings yet — be the first! 🌸</div>
+      <div id="gallery-loading" style="text-align:center;font-size:0.85rem;color:#ab47bc;padding:1rem 0;display:none;">Loading drawings... 🌸</div>
     </div>
   </div>
 
